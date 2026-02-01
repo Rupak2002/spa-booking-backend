@@ -348,3 +348,117 @@ export const getAvailableSlots = async (req, res) => {
     })
   }
 }
+
+/**
+ * Cancel a booking (PENDING or CONFIRMED)
+ *
+ * Business Logic:
+ * 1. Verify booking exists and belongs to this customer
+ * 2. Verify booking is in a cancellable state (pending or confirmed)
+ * 3. Enforce cancellation policy (configurable hours before appointment)
+ * 4. Update booking status to cancelled
+ * 5. Free the time slot back to available
+ *
+ * This is an atomic operation - if the slot update fails, the booking
+ * status is rolled back (same pattern as createReservation)
+ */
+export const cancelReservation = async (req, res) => {
+  try {
+    const { id } = req.params
+    const customer_id = req.profile.id
+
+    // 1. Fetch the booking — ownership check via customer_id
+    const { data: booking, error: fetchError } = await supabase
+      .from('bookings')
+      .select('*')
+      .eq('id', id)
+      .eq('customer_id', customer_id)
+      .single()
+
+    if (fetchError || !booking) {
+      return res.status(404).json({
+        success: false,
+        error: 'Booking not found'
+      })
+    }
+
+    // 2. Guard: only pending or confirmed bookings can be cancelled
+    if (!['pending', 'confirmed'].includes(booking.status)) {
+      return res.status(400).json({
+        success: false,
+        error: `Cannot cancel booking with status: ${booking.status}`
+      })
+    }
+
+    // 3. Cancellation policy: check minimum hours before appointment
+    const minCancelHours = parseInt(process.env.MIN_CANCEL_HOURS) || 0
+    if (minCancelHours > 0 && booking.status === 'confirmed') {
+      const appointmentTime = new Date(`${booking.booking_date}T${booking.start_time}`)
+      const hoursUntilAppointment = (appointmentTime - new Date()) / (1000 * 60 * 60)
+
+      if (hoursUntilAppointment < minCancelHours) {
+        return res.status(400).json({
+          success: false,
+          error: `Cancellations must be made at least ${minCancelHours} hours before the appointment`
+        })
+      }
+    }
+
+    // 4. Update booking status to cancelled
+    const { data: cancelledBooking, error: updateError } = await supabase
+      .from('bookings')
+      .update({
+        status: 'cancelled',
+        reservation_expires_at: null
+      })
+      .eq('id', id)
+      .select()
+      .single()
+
+    if (updateError) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to cancel booking'
+      })
+    }
+
+    // 5. Free the time slot back to available
+    const { error: slotError } = await supabase
+      .from('time_slots')
+      .update({ is_available: true })
+      .eq('id', booking.time_slot_id)
+
+    if (slotError) {
+      // Rollback: restore booking to its previous state (both fields)
+      const { error: rollbackError } = await supabase
+        .from('bookings')
+        .update({
+          status: booking.status,
+          reservation_expires_at: booking.reservation_expires_at
+        })
+        .eq('id', id)
+
+      if (rollbackError) {
+        console.error('Rollback failed for booking:', id, rollbackError)
+      }
+
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to release time slot'
+      })
+    }
+
+    res.json({
+      success: true,
+      data: cancelledBooking,
+      message: 'Booking cancelled successfully. The time slot has been released.'
+    })
+
+  } catch (error) {
+    console.error('Cancel reservation error:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Failed to cancel booking'
+    })
+  }
+}

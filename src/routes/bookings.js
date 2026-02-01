@@ -2,6 +2,7 @@ import express from 'express'
 import {
   createReservation,
   confirmReservation,
+  cancelReservation,
   getMyBookings,
   getAvailableSlots
 } from '../controllers/bookingController.js'
@@ -17,6 +18,7 @@ router.use(authenticate)
 router.get('/available-slots', getAvailableSlots)
 router.post('/reserve', requireRole('customer'), createReservation)
 router.post('/:id/confirm', requireRole('customer'), confirmReservation)
+router.post('/:id/cancel', requireRole('customer'), cancelReservation)
 router.get('/my-bookings', requireRole('customer'), getMyBookings)
 
 // ⭐ NEW: Manual cleanup trigger (admin only, for testing)
