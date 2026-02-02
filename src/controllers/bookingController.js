@@ -1,5 +1,7 @@
 import supabase from '../config/supabase.js'
-import { addMinutes } from '../utils/dateTime.js'
+import { addMinutes, getTimeDuration } from '../utils/dateTime.js'
+import { isValidUUID, isValidDateFormat, parseIntSafe } from '../utils/validation.js'
+import { errorResponse } from '../utils/response.js'
 
 /**
  * Create a PENDING reservation (5-minute hold)
@@ -20,45 +22,44 @@ export const createReservation = async (req, res) => {
 
     // Validation
     if (!service_id || !therapist_id || !time_slot_id) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing required fields: service_id, therapist_id, time_slot_id'
-      })
+      return errorResponse(res, 400, 'Missing required fields: service_id, therapist_id, time_slot_id')
     }
 
-    // 1. Fetch and verify time slot
-    const { data: timeSlot, error: slotError } = await supabase
-      .from('time_slots')
-      .select('*')
-      .eq('id', time_slot_id)
-      .eq('therapist_id', therapist_id)
-      .eq('is_available', true)
-      .single()
+    // Validate UUID formats
+    if (!isValidUUID(service_id) || !isValidUUID(therapist_id) || !isValidUUID(time_slot_id)) {
+      return errorResponse(res, 400, 'Invalid UUID format for service_id, therapist_id, or time_slot_id')
+    }
+
+    // 1. Fetch time slot and service in parallel
+    const [slotResult, serviceResult] = await Promise.all([
+      supabase
+        .from('time_slots')
+        .select('*')
+        .eq('id', time_slot_id)
+        .eq('therapist_id', therapist_id)
+        .eq('is_available', true)
+        .single(),
+      supabase
+        .from('services')
+        .select('id, name, price, duration')
+        .eq('id', service_id)
+        .eq('is_active', true)
+        .single()
+    ])
+
+    const { data: timeSlot, error: slotError } = slotResult
+    const { data: service, error: serviceError } = serviceResult
 
     if (slotError || !timeSlot) {
-      return res.status(400).json({
-        success: false,
-        error: 'Time slot not available or does not exist'
-      })
+      return errorResponse(res, 400, 'Time slot not available or does not exist')
     }
-
-    // 2. Fetch service details (for snapshot)
-    const { data: service, error: serviceError } = await supabase
-      .from('services')
-      .select('id, name, price, duration')
-      .eq('id', service_id)
-      .eq('is_active', true)
-      .single()
 
     if (serviceError || !service) {
-      return res.status(400).json({
-        success: false,
-        error: 'Service not found or inactive'
-      })
+      return errorResponse(res, 400, 'Service not found or inactive')
     }
 
-    // 3. Calculate reservation expiry (5 minutes from now in production)
-    const timeoutMinutes = parseInt(process.env.RESERVATION_TIMEOUT_MINUTES) || 5
+    // 2. Calculate reservation expiry (5 minutes from now in production)
+    const timeoutMinutes = parseIntSafe(process.env.RESERVATION_TIMEOUT_MINUTES, 5, 1, 60)
     const expiresAt = addMinutes(timeoutMinutes)
 
     // 4. Create PENDING booking (snapshot service details)
@@ -237,18 +238,17 @@ export const getMyBookings = async (req, res) => {
       })
     }
 
-    // Group bookings by status for easier frontend consumption
-    const grouped = {
-      upcoming: bookings.filter(b => 
-        b.status === 'confirmed' && new Date(b.booking_date) >= new Date()
-      ),
-      pending: bookings.filter(b => b.status === 'pending'),
-      past: bookings.filter(b => 
-        ['completed', 'confirmed'].includes(b.status) && 
-        new Date(b.booking_date) < new Date()
-      ),
-      cancelled: bookings.filter(b => b.status === 'cancelled')
-    }
+    // Group bookings by status in a single pass
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const grouped = bookings.reduce((acc, b) => {
+      const bookingDate = new Date(b.booking_date)
+      if (b.status === 'cancelled') acc.cancelled.push(b)
+      else if (b.status === 'pending') acc.pending.push(b)
+      else if (b.status === 'confirmed' && bookingDate >= today) acc.upcoming.push(b)
+      else if (['completed', 'confirmed'].includes(b.status)) acc.past.push(b)
+      return acc
+    }, { upcoming: [], pending: [], past: [], cancelled: [] })
 
     res.json({
       success: true,
@@ -276,10 +276,21 @@ export const getAvailableSlots = async (req, res) => {
     const { service_id, start_date, end_date } = req.query
 
     if (!service_id || !start_date) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing required parameters: service_id, start_date'
-      })
+      return errorResponse(res, 400, 'Missing required parameters: service_id, start_date')
+    }
+
+    // Validate UUID format
+    if (!isValidUUID(service_id)) {
+      return errorResponse(res, 400, 'Invalid UUID format for service_id')
+    }
+
+    // Validate date formats
+    if (!isValidDateFormat(start_date)) {
+      return errorResponse(res, 400, 'Invalid date format for start_date (expected YYYY-MM-DD)')
+    }
+
+    if (end_date && !isValidDateFormat(end_date)) {
+      return errorResponse(res, 400, 'Invalid date format for end_date (expected YYYY-MM-DD)')
     }
 
     // Fetch service to get duration
@@ -327,11 +338,8 @@ export const getAvailableSlots = async (req, res) => {
     }
 
     // Filter slots that can accommodate service duration
-    // (This could be done in SQL but keeping it simple for now)
     const validSlots = slots.filter(slot => {
-      const [startHour, startMin] = slot.start_time.split(':').map(Number)
-      const [endHour, endMin] = slot.end_time.split(':').map(Number)
-      const slotDuration = (endHour * 60 + endMin) - (startHour * 60 + startMin)
+      const slotDuration = getTimeDuration(slot.start_time, slot.end_time)
       return slotDuration >= service.duration
     })
 
@@ -391,7 +399,7 @@ export const cancelReservation = async (req, res) => {
     }
 
     // 3. Cancellation policy: check minimum hours before appointment
-    const minCancelHours = parseInt(process.env.MIN_CANCEL_HOURS) || 0
+    const minCancelHours = parseIntSafe(process.env.MIN_CANCEL_HOURS, 0, 0, 168)
     if (minCancelHours > 0 && booking.status === 'confirmed') {
       const appointmentTime = new Date(`${booking.booking_date}T${booking.start_time}`)
       const hoursUntilAppointment = (appointmentTime - new Date()) / (1000 * 60 * 60)
