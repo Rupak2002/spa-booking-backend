@@ -1,15 +1,33 @@
 /**
  * Global Error Handler Middleware
- *
- * Catches all errors thrown in route handlers
- * Must be registered last in middleware chain
+ * 
+ * Catches all errors thrown in route handlers and formats response
+ * This prevents Express from exposing stack traces to clients
  */
 export const errorHandler = (err, req, res, next) => {
-  console.error('Error:', err.message)
-  console.error('Stack:', err.stack)
+  console.error('Error:', err)
 
-  const statusCode = err.statusCode || 500
-  const message = err.message || 'Internal Server Error'
+  // Default error
+  let statusCode = err.statusCode || 500
+  let message = err.message || 'Internal server error'
+
+  // Supabase-specific errors
+  if (err.code) {
+    switch (err.code) {
+      case '23505': // Unique violation
+        statusCode = 409
+        message = 'Resource already exists'
+        break
+      case '23503': // Foreign key violation
+        statusCode = 400
+        message = 'Referenced resource not found'
+        break
+      case '23502': // Not null violation
+        statusCode = 400
+        message = 'Required field missing'
+        break
+    }
+  }
 
   res.status(statusCode).json({
     success: false,

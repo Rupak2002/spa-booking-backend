@@ -470,3 +470,356 @@ export const cancelReservation = async (req, res) => {
     })
   }
 }
+
+// Add these three functions to your bookingController.js (Document 7 version)
+// Place them at the bottom of the file, after cancelReservation
+
+/**
+ * Get all bookings (Admin only)
+ * 
+ * Query params (all optional):
+ * - status: filter by booking status
+ * - therapist_id: filter by therapist
+ * - customer_id: filter by customer  
+ * - start_date: filter bookings from this date onwards
+ * - end_date: filter bookings up to this date
+ */
+export const getAllBookings = async (req, res) => {
+  try {
+    const { status, therapist_id, customer_id, start_date, end_date } = req.query
+
+    // Validate UUIDs if provided
+    if (therapist_id && !isValidUUID(therapist_id)) {
+      return errorResponse(res, 400, 'Invalid UUID format for therapist_id')
+    }
+    if (customer_id && !isValidUUID(customer_id)) {
+      return errorResponse(res, 400, 'Invalid UUID format for customer_id')
+    }
+
+    // Validate date formats if provided
+    if (start_date && !isValidDateFormat(start_date)) {
+      return errorResponse(res, 400, 'Invalid date format for start_date (expected YYYY-MM-DD)')
+    }
+    if (end_date && !isValidDateFormat(end_date)) {
+      return errorResponse(res, 400, 'Invalid date format for end_date (expected YYYY-MM-DD)')
+    }
+
+    // Build query
+    let query = supabase
+      .from('bookings')
+      .select(`
+        *,
+        customer:profiles!bookings_customer_id_fkey(
+          id,
+          full_name,
+          email,
+          phone
+        ),
+        therapist:therapists!bookings_therapist_id_fkey(
+          id,
+          specialization,
+          user:profiles!therapists_user_id_fkey(
+            full_name,
+            email
+          )
+        )
+      `)
+
+    // Apply filters
+    if (status) query = query.eq('status', status)
+    if (therapist_id) query = query.eq('therapist_id', therapist_id)
+    if (customer_id) query = query.eq('customer_id', customer_id)
+    if (start_date) query = query.gte('booking_date', start_date)
+    if (end_date) query = query.lte('booking_date', end_date)
+
+    // Execute query with ordering
+    const { data: bookings, error } = await query
+      .order('booking_date', { ascending: false })
+      .order('start_time', { ascending: false })
+
+    if (error) {
+      console.error('Fetch all bookings error:', error)
+      return errorResponse(res, 500, 'Failed to fetch bookings')
+    }
+
+    // Calculate stats in a single pass
+    const stats = bookings.reduce((acc, b) => {
+      acc.total++
+      acc.by_status[b.status] = (acc.by_status[b.status] || 0) + 1
+      if (['confirmed', 'completed'].includes(b.status)) {
+        acc.total_revenue += parseFloat(b.service_price)
+      }
+      return acc
+    }, {
+      total: 0,
+      by_status: { pending: 0, confirmed: 0, completed: 0, cancelled: 0 },
+      total_revenue: 0
+    })
+
+    res.json({
+      success: true,
+      data: { bookings, stats }
+    })
+
+  } catch (error) {
+    console.error('Get all bookings error:', error)
+    errorResponse(res, 500, 'Failed to fetch bookings')
+  }
+}
+
+/**
+ * Admin cancel any booking (override)
+ * 
+ * Same logic as cancelReservation but without ownership check
+ * Admin can cancel any booking regardless of customer
+ */
+export const adminCancelBooking = async (req, res) => {
+  try {
+    const { id } = req.params
+
+    // Validate UUID
+    if (!isValidUUID(id)) {
+      return errorResponse(res, 400, 'Invalid UUID format for booking ID')
+    }
+
+    // 1. Fetch the booking (no ownership check - admin can cancel any)
+    const { data: booking, error: fetchError } = await supabase
+      .from('bookings')
+      .select('*')
+      .eq('id', id)
+      .single()
+
+    if (fetchError || !booking) {
+      return errorResponse(res, 404, 'Booking not found')
+    }
+
+    // 2. Guard: only pending or confirmed bookings can be cancelled
+    if (!['pending', 'confirmed'].includes(booking.status)) {
+      return errorResponse(res, 400, `Cannot cancel booking with status: ${booking.status}`)
+    }
+
+    // 3. Update booking status to cancelled
+    const { data: cancelledBooking, error: updateError } = await supabase
+      .from('bookings')
+      .update({
+        status: 'cancelled',
+        reservation_expires_at: null
+      })
+      .eq('id', id)
+      .select(`
+        *,
+        customer:profiles!bookings_customer_id_fkey(
+          id,
+          full_name,
+          email
+        ),
+        therapist:therapists!bookings_therapist_id_fkey(
+          id,
+          specialization,
+          user:profiles!therapists_user_id_fkey(
+            full_name,
+            email
+          )
+        )
+      `)
+      .single()
+
+    if (updateError) {
+      console.error('Admin cancel update error:', updateError)
+      return errorResponse(res, 500, 'Failed to cancel booking')
+    }
+
+    // 4. Free the time slot back to available
+    const { error: slotError } = await supabase
+      .from('time_slots')
+      .update({ is_available: true })
+      .eq('id', booking.time_slot_id)
+
+    if (slotError) {
+      // Rollback: restore booking to its previous state
+      const { error: rollbackError } = await supabase
+        .from('bookings')
+        .update({
+          status: booking.status,
+          reservation_expires_at: booking.reservation_expires_at
+        })
+        .eq('id', id)
+
+      if (rollbackError) {
+        console.error('Rollback failed for booking:', id, rollbackError)
+      }
+
+      return errorResponse(res, 500, 'Failed to release time slot')
+    }
+
+    res.json({
+      success: true,
+      data: cancelledBooking,
+      message: `Booking cancelled by admin. Customer ${cancelledBooking.customer.full_name} has been notified.`
+    })
+
+  } catch (error) {
+    console.error('Admin cancel booking error:', error)
+    errorResponse(res, 500, 'Failed to cancel booking')
+  }
+}
+
+/**
+ * Admin reschedule any booking (override)
+ * 
+ * Business Logic:
+ * 1. Fetch the booking (no ownership check - admin can reschedule any)
+ * 2. Verify booking is in a reschedulable state (pending or confirmed)
+ * 3. Verify new time slot exists, is available, and matches service requirements
+ * 4. Atomic swap: update booking, free old slot, reserve new slot
+ * 5. Rollback on failure
+ */
+export const adminRescheduleBooking = async (req, res) => {
+  try {
+    const { id } = req.params
+    const { new_time_slot_id } = req.body
+
+    // Validate UUIDs
+    if (!isValidUUID(id)) {
+      return errorResponse(res, 400, 'Invalid UUID format for booking ID')
+    }
+
+    if (!new_time_slot_id) {
+      return errorResponse(res, 400, 'Missing required field: new_time_slot_id')
+    }
+
+    if (!isValidUUID(new_time_slot_id)) {
+      return errorResponse(res, 400, 'Invalid UUID format for new_time_slot_id')
+    }
+
+    // 1. Fetch the booking
+    const { data: booking, error: fetchError } = await supabase
+      .from('bookings')
+      .select('*')
+      .eq('id', id)
+      .single()
+
+    if (fetchError || !booking) {
+      return errorResponse(res, 404, 'Booking not found')
+    }
+
+    // 2. Guard: only pending or confirmed bookings can be rescheduled
+    if (!['pending', 'confirmed'].includes(booking.status)) {
+      return errorResponse(res, 400, `Cannot reschedule booking with status: ${booking.status}`)
+    }
+
+    // 3. Fetch and verify new time slot
+    const { data: newSlot, error: slotError } = await supabase
+      .from('time_slots')
+      .select('*')
+      .eq('id', new_time_slot_id)
+      .eq('therapist_id', booking.therapist_id) // Must be same therapist
+      .eq('is_available', true)
+      .single()
+
+    if (slotError || !newSlot) {
+      return errorResponse(res, 400, 'New time slot not available or does not exist')
+    }
+
+    // Verify slot can accommodate service duration using utility function
+    const slotDuration = getTimeDuration(newSlot.start_time, newSlot.end_time)
+    
+    if (slotDuration < booking.service_duration) {
+      return errorResponse(res, 400, 'New time slot is too short for this service')
+    }
+
+    // 4. Atomic swap: Update booking first
+    const { data: rescheduledBooking, error: updateError } = await supabase
+      .from('bookings')
+      .update({
+        time_slot_id: new_time_slot_id,
+        booking_date: newSlot.slot_date,
+        start_time: newSlot.start_time,
+        end_time: newSlot.end_time
+      })
+      .eq('id', id)
+      .select(`
+        *,
+        customer:profiles!bookings_customer_id_fkey(
+          id,
+          full_name,
+          email
+        ),
+        therapist:therapists!bookings_therapist_id_fkey(
+          id,
+          specialization,
+          user:profiles!therapists_user_id_fkey(
+            full_name,
+            email
+          )
+        )
+      `)
+      .single()
+
+    if (updateError) {
+      console.error('Reschedule update error:', updateError)
+      return errorResponse(res, 500, 'Failed to reschedule booking')
+    }
+
+    // 5. Free old time slot
+    const { error: freeOldSlotError } = await supabase
+      .from('time_slots')
+      .update({ is_available: true })
+      .eq('id', booking.time_slot_id)
+
+    if (freeOldSlotError) {
+      // Rollback: restore booking to old slot
+      const { error: rollbackError } = await supabase
+        .from('bookings')
+        .update({
+          time_slot_id: booking.time_slot_id,
+          booking_date: booking.booking_date,
+          start_time: booking.start_time,
+          end_time: booking.end_time
+        })
+        .eq('id', id)
+
+      if (rollbackError) {
+        console.error('Rollback failed for booking:', id, rollbackError)
+      }
+
+      return errorResponse(res, 500, 'Failed to free old time slot')
+    }
+
+    // 6. Reserve new time slot
+    const { error: reserveNewSlotError } = await supabase
+      .from('time_slots')
+      .update({ is_available: false })
+      .eq('id', new_time_slot_id)
+
+    if (reserveNewSlotError) {
+      // Rollback: restore booking + re-reserve old slot
+      await supabase
+        .from('bookings')
+        .update({
+          time_slot_id: booking.time_slot_id,
+          booking_date: booking.booking_date,
+          start_time: booking.start_time,
+          end_time: booking.end_time
+        })
+        .eq('id', id)
+
+      await supabase
+        .from('time_slots')
+        .update({ is_available: false })
+        .eq('id', booking.time_slot_id)
+
+      return errorResponse(res, 500, 'Failed to reserve new time slot')
+    }
+
+    res.json({
+      success: true,
+      data: rescheduledBooking,
+      message: `Booking rescheduled successfully. Customer ${rescheduledBooking.customer.full_name} has been notified.`
+    })
+
+  } catch (error) {
+    console.error('Admin reschedule booking error:', error)
+    errorResponse(res, 500, 'Failed to reschedule booking')
+  }
+}

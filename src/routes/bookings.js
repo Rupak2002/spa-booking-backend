@@ -4,7 +4,10 @@ import {
   confirmReservation,
   cancelReservation,
   getMyBookings,
-  getAvailableSlots
+  getAvailableSlots,
+  getAllBookings,
+  adminCancelBooking,
+  adminRescheduleBooking
 } from '../controllers/bookingController.js'
 import { authenticate, requireRole } from '../middleware/auth.js'
 import { manualCleanup } from '../jobs/cleanupExpiredReservations.js'
@@ -20,6 +23,10 @@ router.post('/reserve', requireRole('customer'), createReservation)
 router.post('/:id/confirm', requireRole('customer'), confirmReservation)
 router.post('/:id/cancel', requireRole('customer'), cancelReservation)
 router.get('/my-bookings', requireRole('customer'), getMyBookings)
+// Admin routes
+router.get('/admin/all', requireRole('admin'), getAllBookings)
+router.post('/admin/:id/cancel', requireRole('admin'), adminCancelBooking)
+router.post('/admin/:id/reschedule', requireRole('admin'), adminRescheduleBooking)
 
 // ⭐ NEW: Manual cleanup trigger (admin only, for testing)
 router.post('/cleanup', requireRole('admin'), async (req, res) => {
