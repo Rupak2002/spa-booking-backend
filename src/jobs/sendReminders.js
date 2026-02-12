@@ -43,21 +43,25 @@ export async function sendDailyReminders() {
     // Send reminders for each booking
     let sentCount = 0
     for (const booking of bookings) {
-      const flatBooking = {
-        ...booking,
-        customer_email: booking.customer?.email,
-        customer_name: booking.customer?.full_name,
-        therapist_email: booking.therapist?.profile?.email,
-        therapist_name: booking.therapist?.profile?.full_name,
-      }
+      try {
+        const flatBooking = {
+          ...booking,
+          customer_email: booking.customer?.email,
+          customer_name: booking.customer?.full_name,
+          therapist_email: booking.therapist?.profile?.email,
+          therapist_name: booking.therapist?.profile?.full_name,
+        }
 
-      const result = await sendBookingReminder(flatBooking)
-      if (result.customer || result.therapist) {
-        sentCount++
-      }
+        const result = await sendBookingReminder(flatBooking)
+        if (result.customer || result.therapist) {
+          sentCount++
+        }
 
-      // Small delay between emails to avoid rate limiting
-      await new Promise(resolve => setTimeout(resolve, 100))
+        // Small delay between emails to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 100))
+      } catch (bookingErr) {
+        console.error(`[REMINDER JOB] Failed to send reminder for booking ${booking.id}:`, bookingErr.message)
+      }
     }
 
     console.log(`[REMINDER JOB] Completed. Sent reminders for ${sentCount} bookings`)

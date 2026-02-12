@@ -70,20 +70,14 @@ const server = app.listen(PORT, () => {
 const jobs = startAllJobs()
 
 // Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('\n👋 SIGTERM signal received: closing HTTP server')
+function shutdown(signal) {
+  console.log(`\n👋 ${signal} signal received: closing HTTP server`)
   stopAllJobs(jobs)
   server.close(() => {
     console.log('✅ HTTP server closed')
     process.exit(0)
   })
-})
+}
 
-process.on('SIGINT', () => {
-  console.log('\n👋 SIGINT signal received: closing HTTP server')
-  stopAllJobs(jobs)
-  server.close(() => {
-    console.log('✅ HTTP server closed')
-    process.exit(0)
-  })
-})
+process.on('SIGTERM', () => shutdown('SIGTERM'))
+process.on('SIGINT', () => shutdown('SIGINT'))

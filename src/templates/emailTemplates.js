@@ -1,6 +1,19 @@
 // src/templates/emailTemplates.js
 
 /**
+ * Escape HTML special characters to prevent XSS in email templates
+ */
+function escapeHtml(value) {
+  if (value == null) return ''
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+/**
  * Format date for display (e.g., "Monday, January 15, 2025")
  */
 function formatDate(dateString) {
@@ -100,7 +113,7 @@ function detailRow(label, value) {
   return `
     <tr>
       <td style="padding: 8px 0; color: #6b7280; font-size: 14px; width: 120px;">${label}</td>
-      <td style="padding: 8px 0; color: #1f2937; font-size: 14px; font-weight: 500;">${value}</td>
+      <td style="padding: 8px 0; color: #1f2937; font-size: 14px; font-weight: 500;">${escapeHtml(value)}</td>
     </tr>
   `;
 }

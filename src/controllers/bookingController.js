@@ -131,13 +131,7 @@ export const createReservation = async (req, res) => {
 
 /**
  * Confirm a PENDING reservation (after payment)
- * 
- * This will be used in Phase 2 when we add payment integration
- * For now, customers can confirm immediately (simulated payment)
- */
-/**
- * Confirm a PENDING reservation (after payment)
- * 
+ *
  * This will be used in Phase 2 when we add payment integration
  * For now, customers can confirm immediately (simulated payment)
  */
@@ -531,6 +525,11 @@ export const getAllBookings = async (req, res) => {
       return errorResponse(res, 400, 'Invalid date format for end_date (expected YYYY-MM-DD)')
     }
 
+    const validStatuses = ['pending', 'confirmed', 'cancelled', 'completed']
+    if (status && !validStatuses.includes(status)) {
+      return errorResponse(res, 400, `Invalid status. Must be one of: ${validStatuses.join(', ')}`)
+    }
+
     // Build query
     let query = supabase
       .from('bookings')
@@ -590,7 +589,7 @@ export const getAllBookings = async (req, res) => {
 
   } catch (error) {
     console.error('Get all bookings error:', error)
-    errorResponse(res, 500, 'Failed to fetch bookings')
+    return errorResponse(res, 500, 'Failed to fetch bookings')
   }
 }
 
@@ -693,12 +692,12 @@ export const adminCancelBooking = async (req, res) => {
     res.json({
       success: true,
       data: cancelledBooking,
-      message: `Booking cancelled by admin. Customer ${cancelledBooking.customer.full_name} has been notified.`
+      message: `Booking cancelled by admin. Customer ${cancelledBooking.customer?.full_name} has been notified.`
     })
 
   } catch (error) {
     console.error('Admin cancel booking error:', error)
-    errorResponse(res, 500, 'Failed to cancel booking')
+    return errorResponse(res, 500, 'Failed to cancel booking')
   }
 }
 
@@ -853,12 +852,12 @@ export const adminRescheduleBooking = async (req, res) => {
     res.json({
       success: true,
       data: rescheduledBooking,
-      message: `Booking rescheduled successfully. Customer ${rescheduledBooking.customer.full_name} has been notified.`
+      message: `Booking rescheduled successfully. Customer ${rescheduledBooking.customer?.full_name} has been notified.`
     })
 
   } catch (error) {
     console.error('Admin reschedule booking error:', error)
-    errorResponse(res, 500, 'Failed to reschedule booking')
+    return errorResponse(res, 500, 'Failed to reschedule booking')
   }
 }
 
