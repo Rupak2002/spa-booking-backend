@@ -4,7 +4,7 @@ import rateLimit from 'express-rate-limit'
 import dotenv from 'dotenv'
 import bookingRoutes from './routes/bookings.js'
 import { errorHandler } from './middleware/errorHandler.js'
-import { startCleanupJob, stopCleanupJob } from './jobs/scheduler.js'
+import { startAllJobs, stopAllJobs } from './jobs/scheduler.js'
 
 dotenv.config()
 
@@ -66,13 +66,13 @@ const server = app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`)
 })
 
-// ⭐ NEW: Start background cleanup job
-const cleanupJob = startCleanupJob()
+// Start all background jobs (cleanup + reminders)
+const jobs = startAllJobs()
 
-// ⭐ NEW: Graceful shutdown
+// Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('\n👋 SIGTERM signal received: closing HTTP server')
-  stopCleanupJob(cleanupJob)
+  stopAllJobs(jobs)
   server.close(() => {
     console.log('✅ HTTP server closed')
     process.exit(0)
@@ -81,7 +81,7 @@ process.on('SIGTERM', () => {
 
 process.on('SIGINT', () => {
   console.log('\n👋 SIGINT signal received: closing HTTP server')
-  stopCleanupJob(cleanupJob)
+  stopAllJobs(jobs)
   server.close(() => {
     console.log('✅ HTTP server closed')
     process.exit(0)

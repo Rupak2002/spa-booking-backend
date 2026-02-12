@@ -28,6 +28,18 @@ router.get('/admin/all', requireRole('admin'), getAllBookings)
 router.post('/admin/:id/cancel', requireRole('admin'), adminCancelBooking)
 router.post('/admin/:id/reschedule', requireRole('admin'), adminRescheduleBooking)
 
+// Manual trigger for reminder emails (admin only, for testing)
+router.post('/trigger-reminders', requireRole('admin'), async (req, res) => {
+  try {
+    const { sendDailyReminders } = await import('../jobs/sendReminders.js');
+    const result = await sendDailyReminders();
+    res.json({ success: true, message: 'Reminder job triggered', result });
+  } catch (error) {
+    console.error('Manual reminder trigger error:', error);
+    res.status(500).json({ success: false, message: 'Failed to trigger reminders' });
+  }
+});
+
 // ⭐ NEW: Manual cleanup trigger (admin only, for testing)
 router.post('/cleanup', requireRole('admin'), async (req, res) => {
   try {

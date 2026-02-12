@@ -2,7 +2,7 @@ import supabase from '../config/supabase.js'
 import { addMinutes, getTimeDuration } from '../utils/dateTime.js'
 import { isValidUUID, isValidDateFormat, parseIntSafe } from '../utils/validation.js'
 import { errorResponse } from '../utils/response.js'
-
+import { sendBookingConfirmation, sendBookingCancellation } from '../services/notificationService.js'
 /**
  * Create a PENDING reservation (5-minute hold)
  * 
@@ -135,6 +135,12 @@ export const createReservation = async (req, res) => {
  * This will be used in Phase 2 when we add payment integration
  * For now, customers can confirm immediately (simulated payment)
  */
+/**
+ * Confirm a PENDING reservation (after payment)
+ * 
+ * This will be used in Phase 2 when we add payment integration
+ * For now, customers can confirm immediately (simulated payment)
+ */
 export const confirmReservation = async (req, res) => {
   try {
     const { id } = req.params
@@ -189,6 +195,17 @@ export const confirmReservation = async (req, res) => {
         error: 'Failed to confirm booking'
       })
     }
+
+    // 5. Send confirmation emails (non-blocking)
+    getBookingWithDetails(id)
+      .then(bookingDetails => {
+        if (bookingDetails) {
+          sendBookingConfirmation(bookingDetails)
+        }
+      })
+      .catch(err => {
+        console.error('[CONFIRM] Email send error (non-critical):', err)
+      })
 
     res.json({
       success: true,
@@ -455,6 +472,16 @@ export const cancelReservation = async (req, res) => {
         error: 'Failed to release time slot'
       })
     }
+    // Send cancellation emails (non-blocking)
+    getBookingWithDetails(id)
+      .then(bookingDetails => {
+        if (bookingDetails) {
+          sendBookingCancellation(bookingDetails, 'customer')
+        }
+      })
+      .catch(err => {
+        console.error('[CANCEL] Email send error (non-critical):', err)
+      })
 
     res.json({
       success: true,
@@ -652,6 +679,17 @@ export const adminCancelBooking = async (req, res) => {
       return errorResponse(res, 500, 'Failed to release time slot')
     }
 
+    // Send cancellation emails (non-blocking)
+    getBookingWithDetails(id)
+      .then(bookingDetails => {
+        if (bookingDetails) {
+          sendBookingCancellation(bookingDetails, 'admin')
+        }
+      })
+      .catch(err => {
+        console.error('[ADMIN-CANCEL] Email send error (non-critical):', err)
+      })
+
     res.json({
       success: true,
       data: cancelledBooking,
@@ -822,4 +860,33 @@ export const adminRescheduleBooking = async (req, res) => {
     console.error('Admin reschedule booking error:', error)
     errorResponse(res, 500, 'Failed to reschedule booking')
   }
+}
+
+/**
+ * Fetch full booking details with customer and therapist info for notifications
+ */
+async function getBookingWithDetails(bookingId) {
+  const { data, error } = await supabase
+    .from('bookings')
+    .select(`
+      *,
+      customer:profiles!bookings_customer_id_fkey(email, full_name),
+      therapist:therapists!bookings_therapist_id_fkey(
+        user_id,
+        profile:profiles!therapists_user_id_fkey(email, full_name)
+      )
+    `)
+    .eq('id', bookingId)
+    .single();
+
+  if (error || !data) return null;
+
+  // Flatten for easier template access
+  return {
+    ...data,
+    customer_email: data.customer?.email,
+    customer_name: data.customer?.full_name,
+    therapist_email: data.therapist?.profile?.email,
+    therapist_name: data.therapist?.profile?.full_name,
+  };
 }
