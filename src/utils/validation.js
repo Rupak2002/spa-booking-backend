@@ -25,9 +25,14 @@ export function isValidDateFormat(str) {
   const dateRegex = /^\d{4}-\d{2}-\d{2}$/
   if (!dateRegex.test(str)) return false
 
-  // Verify it's a valid date
-  const date = new Date(str)
-  return !isNaN(date.getTime())
+  // Strictly verify year/month/day components to reject overflow like 2026-13-45
+  const [year, month, day] = str.split('-').map(Number)
+  const date = new Date(year, month - 1, day)
+  return (
+    date.getFullYear() === year &&
+    date.getMonth() === month - 1 &&
+    date.getDate() === day
+  )
 }
 
 /**

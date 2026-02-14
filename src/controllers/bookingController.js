@@ -87,10 +87,7 @@ export const createReservation = async (req, res) => {
 
     if (bookingError) {
       console.error('Booking creation error:', bookingError)
-      return res.status(500).json({
-        success: false,
-        error: 'Failed to create reservation'
-      })
+      return errorResponse(res, 500, 'Failed to create reservation')
     }
 
     // 5. Mark time slot as temporarily unavailable
@@ -102,11 +99,7 @@ export const createReservation = async (req, res) => {
     if (updateError) {
       // Rollback: delete the booking we just created
       await supabase.from('bookings').delete().eq('id', booking.id)
-      
-      return res.status(500).json({
-        success: false,
-        error: 'Failed to reserve time slot'
-      })
+      return errorResponse(res, 500, 'Failed to reserve time slot')
     }
 
     // Success! Return booking with expiry info
@@ -149,26 +142,17 @@ export const confirmReservation = async (req, res) => {
       .single()
 
     if (fetchError || !booking) {
-      return res.status(404).json({
-        success: false,
-        error: 'Booking not found'
-      })
+      return errorResponse(res, 404, 'Booking not found')
     }
 
     // 2. Verify booking is still pending
     if (booking.status !== 'pending') {
-      return res.status(400).json({
-        success: false,
-        error: `Cannot confirm booking with status: ${booking.status}`
-      })
+      return errorResponse(res, 400, `Cannot confirm booking with status: ${booking.status}`)
     }
 
     // 3. Check if reservation has expired
     if (new Date(booking.reservation_expires_at) < new Date()) {
-      return res.status(400).json({
-        success: false,
-        error: 'Reservation has expired. Please create a new booking.'
-      })
+      return errorResponse(res, 400, 'Reservation has expired. Please create a new booking.')
     }
 
     // 4. Update booking status to confirmed
@@ -184,10 +168,7 @@ export const confirmReservation = async (req, res) => {
       .single()
 
     if (updateError) {
-      return res.status(500).json({
-        success: false,
-        error: 'Failed to confirm booking'
-      })
+      return errorResponse(res, 500, 'Failed to confirm booking')
     }
 
     // 5. Send confirmation emails (non-blocking)
@@ -209,10 +190,7 @@ export const confirmReservation = async (req, res) => {
 
   } catch (error) {
     console.error('Confirm reservation error:', error)
-    res.status(500).json({
-      success: false,
-      error: 'Failed to confirm reservation'
-    })
+    return errorResponse(res, 500, 'Failed to confirm reservation')
   }
 }
 
@@ -243,10 +221,7 @@ export const getMyBookings = async (req, res) => {
 
     if (error) {
       console.error('Fetch bookings error:', error)
-      return res.status(500).json({
-        success: false,
-        error: 'Failed to fetch bookings'
-      })
+      return errorResponse(res, 500, 'Failed to fetch bookings')
     }
 
     // Group bookings by status in a single pass
@@ -271,10 +246,7 @@ export const getMyBookings = async (req, res) => {
 
   } catch (error) {
     console.error('Get my bookings error:', error)
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch bookings'
-    })
+    return errorResponse(res, 500, 'Failed to fetch bookings')
   }
 }
 
@@ -342,10 +314,7 @@ export const getAvailableSlots = async (req, res) => {
 
     if (error) {
       console.error('Fetch slots error:', error)
-      return res.status(500).json({
-        success: false,
-        error: 'Failed to fetch time slots'
-      })
+      return errorResponse(res, 500, 'Failed to fetch time slots')
     }
 
     // Filter slots that can accommodate service duration
@@ -361,10 +330,7 @@ export const getAvailableSlots = async (req, res) => {
 
   } catch (error) {
     console.error('Get available slots error:', error)
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch available slots'
-    })
+    return errorResponse(res, 500, 'Failed to fetch available slots')
   }
 }
 
@@ -395,18 +361,12 @@ export const cancelReservation = async (req, res) => {
       .single()
 
     if (fetchError || !booking) {
-      return res.status(404).json({
-        success: false,
-        error: 'Booking not found'
-      })
+      return errorResponse(res, 404, 'Booking not found')
     }
 
     // 2. Guard: only pending or confirmed bookings can be cancelled
     if (!['pending', 'confirmed'].includes(booking.status)) {
-      return res.status(400).json({
-        success: false,
-        error: `Cannot cancel booking with status: ${booking.status}`
-      })
+      return errorResponse(res, 400, `Cannot cancel booking with status: ${booking.status}`)
     }
 
     // 3. Cancellation policy: check minimum hours before appointment
@@ -416,10 +376,7 @@ export const cancelReservation = async (req, res) => {
       const hoursUntilAppointment = (appointmentTime - new Date()) / (1000 * 60 * 60)
 
       if (hoursUntilAppointment < minCancelHours) {
-        return res.status(400).json({
-          success: false,
-          error: `Cancellations must be made at least ${minCancelHours} hours before the appointment`
-        })
+        return errorResponse(res, 400, `Cancellations must be made at least ${minCancelHours} hours before the appointment`)
       }
     }
 
@@ -435,10 +392,7 @@ export const cancelReservation = async (req, res) => {
       .single()
 
     if (updateError) {
-      return res.status(500).json({
-        success: false,
-        error: 'Failed to cancel booking'
-      })
+      return errorResponse(res, 500, 'Failed to cancel booking')
     }
 
     // 5. Free the time slot back to available
@@ -485,10 +439,7 @@ export const cancelReservation = async (req, res) => {
 
   } catch (error) {
     console.error('Cancel reservation error:', error)
-    res.status(500).json({
-      success: false,
-      error: 'Failed to cancel booking'
-    })
+    return errorResponse(res, 500, 'Failed to cancel booking')
   }
 }
 
@@ -573,7 +524,7 @@ export const getAllBookings = async (req, res) => {
       acc.total++
       acc.by_status[b.status] = (acc.by_status[b.status] || 0) + 1
       if (['confirmed', 'completed'].includes(b.status)) {
-        acc.total_revenue += parseFloat(b.service_price)
+        acc.total_revenue += parseFloat(b.service_price) || 0
       }
       return acc
     }, {

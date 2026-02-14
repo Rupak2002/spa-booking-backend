@@ -17,7 +17,9 @@ function escapeHtml(value) {
  * Format date for display (e.g., "Monday, January 15, 2025")
  */
 function formatDate(dateString) {
+  if (!dateString || typeof dateString !== 'string') return 'Unknown date'
   const date = new Date(dateString + 'T00:00:00'); // Avoid timezone shift
+  if (isNaN(date.getTime())) return 'Invalid date'
   return date.toLocaleDateString('en-US', {
     weekday: 'long',
     year: 'numeric',
@@ -30,8 +32,10 @@ function formatDate(dateString) {
  * Format time for display (e.g., "10:00 AM")
  */
 function formatTime(timeString) {
+  if (!timeString || typeof timeString !== 'string') return 'Unknown time'
   const [hours, minutes] = timeString.split(':');
   const hour = parseInt(hours, 10);
+  if (isNaN(hour) || hour < 0 || hour > 23) return 'Invalid time'
   const ampm = hour >= 12 ? 'PM' : 'AM';
   const hour12 = hour % 12 || 12;
   return `${hour12}:${minutes} ${ampm}`;
@@ -92,7 +96,7 @@ function baseTemplate(content, previewText = '') {
                 Thank you for choosing Serenity Spa
               </p>
               <p style="margin: 10px 0 0; color: #9ca3af; font-size: 12px;">
-                Questions? Reply to this email or call us at (555) 123-4567
+                Questions? Reply to this email or call us at ${process.env.SUPPORT_PHONE || '(555) 123-4567'}
               </p>
             </td>
           </tr>
@@ -124,8 +128,8 @@ function detailRow(label, value) {
 function bookingConfirmation(booking, recipientType = 'customer') {
   const isCustomer = recipientType === 'customer';
   const greeting = isCustomer
-    ? `Hi ${booking.customer_name || 'there'},`
-    : `Hi ${booking.therapist_name || 'there'},`;
+    ? `Hi ${escapeHtml(booking.customer_name) || 'there'},`
+    : `Hi ${escapeHtml(booking.therapist_name) || 'there'},`;
 
   const intro = isCustomer
     ? 'Great news! Your booking has been confirmed.'
@@ -172,8 +176,8 @@ function bookingConfirmation(booking, recipientType = 'customer') {
 function bookingReminder(booking, recipientType = 'customer') {
   const isCustomer = recipientType === 'customer';
   const greeting = isCustomer
-    ? `Hi ${booking.customer_name || 'there'},`
-    : `Hi ${booking.therapist_name || 'there'},`;
+    ? `Hi ${escapeHtml(booking.customer_name) || 'there'},`
+    : `Hi ${escapeHtml(booking.therapist_name) || 'there'},`;
 
   const content = `
     <h2 style="margin: 0 0 10px; color: #1f2937; font-size: 22px;">
@@ -214,8 +218,8 @@ function bookingReminder(booking, recipientType = 'customer') {
 function bookingCancellation(booking, recipientType = 'customer', cancelledBy = 'customer') {
   const isCustomer = recipientType === 'customer';
   const greeting = isCustomer
-    ? `Hi ${booking.customer_name || 'there'},`
-    : `Hi ${booking.therapist_name || 'there'},`;
+    ? `Hi ${escapeHtml(booking.customer_name) || 'there'},`
+    : `Hi ${escapeHtml(booking.therapist_name) || 'there'},`;
 
   const cancelMessage = cancelledBy === 'admin'
     ? 'This booking was cancelled by the spa administration.'

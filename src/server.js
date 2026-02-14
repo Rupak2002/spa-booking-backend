@@ -1,6 +1,7 @@
 import express from 'express'
 import cors from 'cors'
 import rateLimit from 'express-rate-limit'
+import helmet from 'helmet'
 import dotenv from 'dotenv'
 import bookingRoutes from './routes/bookings.js'
 import { errorHandler } from './middleware/errorHandler.js'
@@ -40,11 +41,11 @@ const generalLimiter = rateLimit({
 })
 
 // Middleware
+app.use(helmet())
 app.use(cors(corsOptions))
-app.use(generalLimiter)
 app.use(express.json())
 
-// Routes
+// Health check — before rate limiter so monitoring tools never get 429
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'OK',
@@ -52,6 +53,8 @@ app.get('/api/health', (req, res) => {
     timestamp: new Date().toISOString()
   })
 })
+
+app.use(generalLimiter)
 
 // Booking routes
 app.use('/api/bookings', bookingRoutes)

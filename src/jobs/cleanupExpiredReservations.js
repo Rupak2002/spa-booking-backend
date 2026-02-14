@@ -43,13 +43,12 @@ export async function cleanupExpiredReservations() {
     // Step 2: Get all time slot IDs to free
     const timeSlotIds = expiredBookings.map(b => b.time_slot_id).filter(Boolean)
 
-    // Step 3: Delete expired bookings
+    // Step 3: Delete expired bookings by ID (avoids race condition with re-querying)
+    const expiredIds = expiredBookings.map(b => b.id)
     const { error: deleteError } = await supabase
       .from('bookings')
       .delete()
-      .eq('status', 'pending')
-      .lt('reservation_expires_at', now)
-      .not('reservation_expires_at', 'is', null)
+      .in('id', expiredIds)
 
     if (deleteError) {
       console.error('Error deleting expired bookings:', deleteError)
