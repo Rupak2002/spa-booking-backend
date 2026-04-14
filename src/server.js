@@ -4,6 +4,7 @@ import rateLimit from 'express-rate-limit'
 import helmet from 'helmet'
 import dotenv from 'dotenv'
 import bookingRoutes from './routes/bookings.js'
+import analyticsRoutes from './routes/analytics.js'
 import { errorHandler } from './middleware/errorHandler.js'
 import { startAllJobs, stopAllJobs } from './jobs/scheduler.js'
 
@@ -56,8 +57,9 @@ app.get('/api/health', (req, res) => {
 
 app.use(generalLimiter)
 
-// Booking routes
+// Routes
 app.use('/api/bookings', bookingRoutes)
+app.use('/api/analytics', analyticsRoutes)
 
 // Global error handler (must be last)
 app.use(errorHandler)
